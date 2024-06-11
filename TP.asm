@@ -48,8 +48,12 @@ w_temp		EQU	0x7D		; variable used for context saving
 status_temp	EQU	0x7E		; variable used for context saving
 pclath_temp	EQU	0x7F		; variable used for context saving
 AUX		EQU	0x20		; variable usada para multiplexar los displays y el teclado
-DIG1		EQU	0x21
-DIG2		EQU	0x22
+DIG1		EQU	0x21		; variable usada para almacenar el digito 1 del display
+DIG2		EQU	0x22		; variable usada para almacenar el digito 2 del display
+CONTSAMPLE	EQU	0x23		; variable usada para esperar el tiempo de conversion necesario antes de activar ADC
+ADCRESULT	EQU	0x24
+ADCDIGIT	EQU	0x25
+TEMPREF		EQU	0x26
 
 
 ;**********************************************************************
@@ -60,12 +64,9 @@ DIG2		EQU	0x22
 	GOTO	ISR		  ; go to interrupt rutine
 
 MAIN
-	BANKSEL	    ANSEL
-	BSF	    ANSEL,ANS0	    ; Configura RA0 como Analogica, el resto es Digital
-	CLRF	    ANSELH
-	BCF	    BAUDCTL,BRG16   ; Generador de Baudios de 8-bits
 	BANKSEL	    ADCON1
-	BSF	    TRISA,TRISA0    ; Configura RA0 como Entrada
+	MOVLW	    b'00000001'
+	MOVWF	    TRISA	    ; Configura RA0 como Entrada, el resto como salida
 	MOVLW	    b'00011110'	    ; Configura RB1 a RB4 como Entradas y RB5 a RB7 como Salidas
 	MOVWF	    TRISB	    
 	CLRF	    TRISD	    ; Configura Puerto D como salidas (segmentos del display)
@@ -83,6 +84,10 @@ MAIN
 	MOVWF	    TXSTA
 	MOVLW	    .25		    ; Configuro un Baud rate de 9600 teniendo en cuenta que Fosc = 4MHz (tabla 12-5 del datasheet)
 	MOVWF	    SPBRG
+	BANKSEL	    ANSEL
+	BSF	    ANSEL,0	    ; Configura RA0 como Analogica, el resto es Digital
+	CLRF	    ANSELH
+	BCF	    BAUDCTL,BRG16   ; Generador de Baudios de 8-bits
 	BANKSEL	    ADCON0
 	MOVLW	    b'11000001'	    ; El ADC usa FRC, selecciona Canal AN0, ADC habilitado
 	MOVWF	    ADCON0
@@ -96,13 +101,13 @@ MAIN
 	BSF	    RCSTA,SPEN	    ; habilita RX y TX como puertos seriales
 	BCF	    STATUS,RP0
 	BCF	    STATUS,RP1
+	MOVLW	    b'11111111'	    ; inicia el sistema con todo apagado
+	MOVWF	    PORTA
 	MOVLW	    b'11011011'	    ; carga un binario en el PORTB para multiplexar y tambien en la variable Aux
 	MOVWF	    PORTB
 	MOVWF	    AUX
-	MOVLW	    .2
-	MOVWF	    DIG1
-	MOVLW	    .0
-	MOVWF	    DIG2
+	MOVLW	    .26
+	MOVWF	    TEMPREF
 	CLRF	    PORTD
 	CLRW
 	BCF	    STATUS,C
@@ -126,7 +131,7 @@ MUX
     BTFSS       AUX,1             ; Salta si el segundo bit de Aux es 1
     BSF         STATUS,C         
     RRF         AUX,F             ; Rota Aux a la derecha
-    MOVF        AUX,W
+    MOVF	AUX,W
     MOVWF       PORTB             ; Hace el multiplexado
     
     BTFSC       PORTB,6
@@ -155,11 +160,66 @@ TABLA				  ; La tabla se hace teniendo en cuenta Display de Anodo Comun
     RETLW       b'01101111'       ; 9    
     
 SAMPLE
-    CLRF        TMR1L
+    CALL	SAMPLETIME	  ; Acquisition delay
+    BSF		ADCON0,GO	  ; Inicia la conversion
+    BTFSC	ADCON0,GO	  ; Testea si se hizo la conversion
+    GOTO	$-1		  ; Si no se termino la conversion, vuelve a testear
+    BANKSEL	ADRESL
+    BCF		STATUS,C	  ; Setea carry en 0 para no tener problemas con al rotar
+    RRF		ADRESL,W	  ; Rota a la derecha (porque el ADC tiene una resolucion de 5mV y el sensor un paso de 10mV entonces hay un bit de mas)
+    BANKSEL	TMR1L
+    MOVWF	ADCRESULT	  ; Guarda el resultado del ADC
+    MOVWF	ADCDIGIT	  ; Guarda el resultado del ADC en una variable auxiliar
+    CALL	DIGITOS		  ; Setea los digitos del display
+    CALL	CHECK		  ; Verifica que hacer con perifericos
+    CLRF        TMR1L		  ; Limpia el Timer1
     CLRF        TMR1H
     BCF         PIR1,TMR1IF
     GOTO        EXIT_ISR
 
+SAMPLETIME  ;DELAY DE 12 uS
+    MOVLW	.4
+    MOVWF	CONTSAMPLE
+    DECFSZ	CONTSAMPLE,F
+    GOTO $-1
+    RETURN
+    
+DIGITOS
+    CLRF	DIG1		    ; Limpio DIG1 para no tener problemas con iteraciones anteriores
+    MOVLW	.10
+    SUBWF	ADCDIGIT,F	    ; Se le resta 10 al resultado del ADC
+    INCF	DIG1,F		    ; Se cuenta cuantas veces se le puede restar 10 al resultado
+    BTFSC	STATUS,C	    ; Cuando la resta de un numero negativo (C=0), deja de restar. Cuando esto suceda, hay una resta de mas
+    GOTO	$-3
+    DECF	DIG1,F		    ; Reduzco en 1 la cantidad de restas por la resta adicional
+    ADDWF	ADCDIGIT,W	    ; Agrego 10 por la resta adicional y al resultado lo paso a W porque es el digito 2
+    MOVWF	DIG2		    ; El resto de la division pasa a ser el digito 2
+    RETURN
+
+CHECK
+    MOVF	ADCRESULT,W
+    SUBWF	TEMPREF,W	  ; TEMPREF-ADCRESULT
+    BTFSC	STATUS,Z	  ; Salta si el resultado de la resta es distinto de 0
+    GOTO	OFFALL
+    BTFSS	STATUS,C	  ; Salta si el resultado de la resta es positivo (prender resistencia)
+    GOTO	REFRIGERATE
+    GOTO	HEAT		  ; Salta si el resultado de la resta es negativo (prende fan y bomba de agua)
+    
+OFFALL
+    MOVLW	b'11111111'	  ; Apaga todo, resistencia, bomba y fan
+    MOVWF	PORTA
+    RETURN			  ; Vuelve a SAMPLE
+    
+REFRIGERATE
+    MOVLW	b'00001000'	  ; Desactiva resistencia
+    MOVWF	PORTA
+    RETURN			  ; Vuelve a SAMPLE
+    
+HEAT
+    MOVLW	b'00000110'	  ; Apaga bomba y fan y prende resistencia
+    MOVWF	PORTA
+    RETURN			  ; Vuelve a SAMPLE
+    
 EXIT_ISR
     SWAPF       status_temp,w     ; Recupera contexto
     MOVWF       STATUS            
