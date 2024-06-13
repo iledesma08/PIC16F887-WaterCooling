@@ -44,17 +44,17 @@
 
 
 ;***** VARIABLE DEFINITIONS
-w_temp		EQU	0x7D		; variable used for context saving
-status_temp	EQU	0x7E		; variable used for context saving
-pclath_temp	EQU	0x7F		; variable used for context saving
-AUX		EQU	0x20		; variable usada para multiplexar los displays y el teclado
-DIG1		EQU	0x21		; variable usada para almacenar el digito 1 del display
-DIG2		EQU	0x22		; variable usada para almacenar el digito 2 del display
-CONTSAMPLE	EQU	0x23		; variable usada para esperar el tiempo de conversion necesario antes de activar ADC
-ADCRESULT	EQU	0x24		; variable usada para almacenar el resultado del ADC
-ADCDIGIT	EQU	0x25		; variable usada para almacenar el resultado del ADC y definir el DIG2 del Display
-TEMPREF		EQU	0x26		; variable usada para almacenar la temperatura de referencia
-
+w_temp		EQU	0x7D		; Para guardar contexto
+status_temp	EQU	0x7E		
+	
+AUX		EQU	0x20		; Para multiplexar los displays y el teclado
+DIG1		EQU	0x21		; Para almacenar el digito 1 del display
+DIG2		EQU	0x22		; Para almacenar el digito 2 del display
+CONTSAMPLE	EQU	0x23		; Para esperar el tiempo de conversion necesario antes de activar ADC
+ADCRESULT	EQU	0x24		; Para almacenar el resultado del ADC
+ADCDIGIT	EQU	0x25		; Para almacenar el resultado del ADC y definir el DIG2 del Display
+TEMPREF		EQU	0x26		; Para almacenar la temperatura de referencia
+TEMPTECLADO	EQU	0x27
 
 ;**********************************************************************
 	ORG     0x00		    ; processor reset vector
@@ -64,21 +64,22 @@ TEMPREF		EQU	0x26		; variable usada para almacenar la temperatura de referencia
 	GOTO	ISR		    ; go to interrupt rutine
 
 MAIN
-	BANKSEL	    ADCON1
+	BANKSEL	    TRISA
 	MOVLW	    b'00000001'
-	MOVWF	    TRISA	    ; Configura RA0 como Entrada, el resto como salida
-	MOVLW	    b'00011110'	    ; Configura RB1 a RB4 como Entradas y RB5 a RB7 como Salidas
+	MOVWF	    TRISA	    ; Configura RA0 como Entrada (sensor), el resto como salida (perifericos)
+	MOVLW	    b'00011110'	    ; Configura RB1 a RB4 como Entradas (teclado) y RB5 a RB7 como Salidas (multiplexado)
 	MOVWF	    TRISB
-	CLRF	    TRISC	    ; Configura RC6 como salida (para la transmision)
+	BCF	    TRISC,6	    ; Configura RC6 como salida (para la transmision)
 	CLRF	    TRISD	    ; Configura Puerto D como salidas (segmentos del display)
-	MOVLW	    b'01100000'	    ; Habilita interrupcion por perifericos (p/Timer1) y por overflow de Timer0. Limpia bandera Timer0
+	MOVLW	    b'01101000'	    ; Habilita interrupcion por perifericos (p/Timer1), por overflow de Timer0 y por cambios en PORTB. Limpia T0IF y RBIF
 	MOVWF	    INTCON
 	MOVLW	    b'00000001'	    ; Habilita interrupcion por Timer1 (va a ser el que activa el ADC y cambia el contenido de los Displays)
 	MOVWF	    PIE1            
 	MOVLW	    b'00000101'	    ; Habilita Rpu y configura el prescaler de Timer0 en 64
 	MOVWF	    OPTION_REG	    ; Habilita Rpu
-	MOVLW	    b'00011110'	    ; Rpu de RB1 a RB4
-	MOVWF	    WPUB
+	MOVLW	    b'00011110'	    
+	MOVWF	    WPUB	    ; Rpu de RB1 a RB4
+	;MOVWF	    IOCB	    ; Interrupcion por cambios en RB1 a RB4
 	MOVLW	    b'10000000'	    ; Justificado a la derecha (priorizo ADRESL), Vref- = GND, Vref+ = Vcc
 	MOVWF	    ADCON1	    
 	MOVLW	    b'00100100'	    ; Habilita la Transmision y configura Transmision de 8 bits habilitada a alta velocidad (BRGH=1)
@@ -86,7 +87,7 @@ MAIN
 	MOVLW	    .25		    ; Configuro un Baud rate de 9600 teniendo en cuenta que Fosc = 4MHz (tabla 12-5 del datasheet)
 	MOVWF	    SPBRG
 	BANKSEL	    ANSEL
-	BSF	    ANSEL,0	    ; Configura RA0 como Analogica, el resto es Digital
+	BSF	    ANSEL,0	    ; Configura RA0 como Analogica (sensor), el resto es Digital
 	CLRF	    ANSELH
 	BCF	    BAUDCTL,BRG16   ; Generador de Baudios de 8-bits
 	BANKSEL	    ADCON0
@@ -94,7 +95,7 @@ MAIN
 	MOVWF	    ADCON0
 	MOVLW	    .100	    
 	MOVWF	    TMR0	    ; Cargo Timer0 para que dure 10ms (para los displays y el teclado)
-	CLRF	    TMR1L
+	CLRF	    TMR1L	    ; Limpio Timer1 para que dure el mayor tiempo posible
 	CLRF	    TMR1H
 	MOVLW	    b'00110001'	    ; Habilita Timer1 y configura el prescaler
 	MOVWF	    T1CON
@@ -109,7 +110,12 @@ MAIN
 	MOVWF	    AUX
 	MOVLW	    .26		    ; carga 26 como temperatura de referencia por default
 	MOVWF	    TEMPREF
-	CLRF	    PORTD
+	; Muesta HI al iniciar el sistema
+	MOVLW	    .10		    ; H
+	MOVWF	    DIG1
+	MOVLW	    .1		    ; 1
+	MOVWF	    DIG2
+	CLRF	    TEMPTECLADO	    ; se inicia la temperatura ingresada por teclado en 0
 	CLRW
 	BCF	    STATUS,C
 	BCF	    STATUS,Z
@@ -121,33 +127,36 @@ ISR
     SWAPF       STATUS,w          
     MOVWF       status_temp       
 
-    BTFSS       PIR1,TMR1IF	    ; Si es interrupción por TMR1F, se saltea una línea
+    BTFSC       INTCON,T0IF	    ; Si no es interrupcion por Timer0, salta
     GOTO        MUX
-    GOTO        SAMPLE
+    BTFSC       PIR1,TMR1IF	    ; Si no es interrupcion por Timer1, salta
+    GOTO	SAMPLE
+    ;GOTO        KEYPAD		    ; Si llega aca, es interrupcion por cambios en RB
     
 MUX
     BCF         STATUS,C
-    BTFSS       AUX,0		    ; Salta si el primer bit de Aux es 1
+    BTFSS       AUX,0		    ; Si el primer bit de AUX es 0, pone 1 en STATUS,C
     BSF         STATUS,C
-    BTFSS       AUX,1		    ; Salta si el segundo bit de Aux es 1
+    BTFSS       AUX,1		    ; Si el segundo bit de AUX es 0, pone 1 en STATUS,C
     BSF         STATUS,C         
     RRF         AUX,F		    ; Rota Aux a la derecha
     MOVF	AUX,W
     MOVWF       PORTB		    ; Hace el multiplexado
     
-    BTFSC       PORTB,6
-    MOVF        DIG1,W		    ; Si el sexto bit de PORTB es 0, muestra el DIG2 en el display
-    BTFSC       PORTB,5
-    MOVF        DIG2,W		    ; Si el quinto bit de PORTB es 0, muestra el DIG1 en el display
-    CALL        TABLA
-    MOVWF       PORTD		    ; Muestra el número en el display correspondiente
+    CLRW
+    BTFSS       PORTB,7
+    MOVF        DIG1,W		    ; Si el septimo bit de PORTB es 0, muestra el DIG1 en el display (MSD)
+    BTFSS       PORTB,6
+    MOVF        DIG2,W		    ; Si el sexto bit de PORTB es 0, muestra el DIG2 en el display (LSD)
+    CALL        TABLADISPLAY
+    MOVWF       PORTD		    ; Activa los segmentos del display para mostrar el numero de digito que corresponda
     
     MOVLW       .100
     MOVWF       TMR0		    ; Carga Timer0 para que dure 10ms (para los displays y el teclado)
     BCF         INTCON,T0IF
     GOTO        EXIT_ISR
 
-TABLA				    ; La tabla se hace teniendo en cuenta Display de Anodo Comun
+TABLADISPLAY			    ; La tabla se hace teniendo en cuenta Display de Anodo Comun
     ADDWF       PCL,F
     RETLW       b'00111111'	    ; 0
     RETLW       b'00000110'	    ; 1
@@ -158,7 +167,8 @@ TABLA				    ; La tabla se hace teniendo en cuenta Display de Anodo Comun
     RETLW       b'01111101'	    ; 6
     RETLW       b'00000111'	    ; 7
     RETLW       b'01111111'	    ; 8
-    RETLW       b'01101111'	    ; 9    
+    RETLW       b'01101111'	    ; 9
+    RETLW	b'01110110'	    ; H
     
 SAMPLE
     CALL	SAMPLETIME	    ; Acquisition delay
@@ -186,6 +196,14 @@ SAMPLETIME			    ;DELAY DE 12 uS
     GOTO $-1
     RETURN
     
+COMSERIE
+    MOVF	TEMPREF,W	    ; Copia TEMPREF en W
+    MOVWF	TXREG		    ; Se escribe la TEMPREF en TXREG
+    NOP				    ; "Polling TXIF immediately following the TXREG write will return invalid results"
+    BTFSS	PIR1,TXIF	    ; Sigue cuando TXREG se haya vaciado (no es necesario habilitar TXIE)
+    GOTO	$-1
+    RETURN
+    
 DIGITOS
     CLRF	DIG1		    ; Limpio DIG1 para no tener problemas con iteraciones anteriores
     MOVLW	.10
@@ -201,14 +219,14 @@ DIGITOS
 CHECK
     MOVF	ADCRESULT,W	    ; Copia ADCRESULT en W para la resta
     SUBWF	TEMPREF,W	    ; TEMPREF-ADCRESULT
-    BTFSC	STATUS,Z	    ; Salta si el resultado de la resta es distinto de 0
-    GOTO	OFFALL
-    BTFSS	STATUS,C	    ; Salta si el resultado de la resta es positivo (prender resistencia)
-    GOTO	REFRIGERATE
-    GOTO	HEAT		    ; Salta si el resultado de la resta es negativo (prende fan y bomba de agua)
+    BTFSC	STATUS,Z	    
+    GOTO	OFFALL		    ; Si el resultado de la resta es 0, apaga todo
+    BTFSS	STATUS,C	    
+    GOTO	REFRIGERATE	    ; Si el resultado de la resta es positivo (prender calentador)
+    GOTO	HEAT		    ; Si el resultado de la resta es negativo (prende fan y bomba de agua)
     
 OFFALL
-    MOVLW	b'11111111'	    ; Apaga todo, resistencia, bomba y fan
+    MOVLW	b'11111111'	    ; Apaga todo, calentador, bomba y fan
     MOVWF	PORTA
     RETURN			    ; Vuelve a SAMPLE
     
@@ -222,19 +240,11 @@ HEAT
     MOVWF	PORTA
     RETURN			    ; Vuelve a SAMPLE
     
-COMSERIE
-    MOVF	ADCRESULT,W	    ; Copia ADCRESULT en W
-    MOVWF	TXREG		    ; Se escribe el resultado del ADC en TXREG
-    NOP				    ; "Polling TXIF immediately following the TXREG write will return invalid results"
-    BTFSS	PIR1,TXIF	    ; Sigue cuando TXREG se haya vaciado (no es necesario habilitar TXIE)
-    GOTO	$-1
-    RETURN
-    
 EXIT_ISR
     SWAPF       status_temp,w	    ; Recupera contexto
     MOVWF       STATUS            
     SWAPF       w_temp,f
     SWAPF       w_temp,w          
-    RETFIE			    ; Vuelve de la interrupción
+    RETFIE			    ; Vuelve de la interrupciÃ³n
 
 	END
