@@ -13,7 +13,7 @@ def read_adc_data(port, baud_rate=9600, timeout=1):
                 if temperature:
                     # Convertimos el byte recibido a un entero, especificando el byteorder
                     temperature = int.from_bytes(temperature, byteorder='little')
-                    print(f"Temperatura detectada: {temperature}°C")
+                    print(f"Temperatura de referencia: {temperature}°C")
 
             except KeyboardInterrupt:
                 break
@@ -28,5 +28,5 @@ def read_adc_data(port, baud_rate=9600, timeout=1):
 
 if __name__ == "__main__":
     # Cambiar esto al puerto serial correcto
-    port = 'COM1'  
+    port = 'COM3'  
     read_adc_data(port)
