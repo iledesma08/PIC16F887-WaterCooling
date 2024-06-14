@@ -357,6 +357,6 @@ EXIT_ISR
     MOVWF       STATUS            
     SWAPF       w_temp,f
     SWAPF       w_temp,w          
-    RETFIE			    ; Vuelve de la interrupción
+    RETFIE			    ; Vuelve de la interrupciÃ³n
 
 	END
