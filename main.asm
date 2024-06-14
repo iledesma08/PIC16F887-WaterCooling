@@ -50,11 +50,17 @@ status_temp	EQU	0x7E
 AUX		EQU	0x20		; Para multiplexar los displays y el teclado
 DIG1		EQU	0x21		; Para almacenar el digito 1 del display
 DIG2		EQU	0x22		; Para almacenar el digito 2 del display
-CONTSAMPLE	EQU	0x23		; Para esperar el tiempo de conversion necesario antes de activar ADC
+CONT_TEMP	EQU	0x23		; Para esperar el tiempo de conversion necesario antes de activar ADC
 ADCRESULT	EQU	0x24		; Para almacenar el resultado del ADC
 ADCDIGIT	EQU	0x25		; Para almacenar el resultado del ADC y definir el DIG2 del Display
 TEMPREF		EQU	0x26		; Para almacenar la temperatura de referencia
-TEMPTECLADO	EQU	0x27
+TEMPTECLADO	EQU	0x27		; Para almacenar lo que se va ingresando por teclado
+KEY_CHECK	EQU	0x28		; Para chequear si sigue presionada la misma tecla
+PAD_MUL		EQU	0x29		; Para obtener el MSD del numero ingresado por teclado
+PAD_DIG1	EQU	0x30		; Se utiliza auxiliarmente para obtener el MSD del numero ingresado por teclado
+AUX_ADD		EQU	0x31		; Se utiliza para guardar temporalmente al digito ingresado por teclado
+AUX_SWAP	EQU	0x32		; Para facilitar el swap que se hace para establecer TEMPREF
+AUX_COMSERIE	EQU	0x33		; Para hacer una comunicacion inicial 
 
 ;**********************************************************************
 	ORG     0x00		    ; processor reset vector
@@ -67,7 +73,7 @@ MAIN
 	BANKSEL	    TRISA
 	MOVLW	    b'00000001'
 	MOVWF	    TRISA	    ; Configura RA0 como Entrada (sensor), el resto como salida (perifericos)
-	MOVLW	    b'00011110'	    ; Configura RB1 a RB4 como Entradas (teclado) y RB5 a RB7 como Salidas (multiplexado)
+	MOVLW	    b'00011111'	    ; Configura RB0 a RB4 como Entradas (teclado) y RB5 a RB7 como Salidas (multiplexado)
 	MOVWF	    TRISB
 	BCF	    TRISC,6	    ; Configura RC6 como salida (para la transmision)
 	CLRF	    TRISD	    ; Configura Puerto D como salidas (segmentos del display)
@@ -77,9 +83,9 @@ MAIN
 	MOVWF	    PIE1            
 	MOVLW	    b'00000101'	    ; Habilita Rpu y configura el prescaler de Timer0 en 64
 	MOVWF	    OPTION_REG	    ; Habilita Rpu
-	MOVLW	    b'00011110'	    
-	MOVWF	    WPUB	    ; Rpu de RB1 a RB4
-	;MOVWF	    IOCB	    ; Interrupcion por cambios en RB1 a RB4
+	MOVLW	    b'00011011'	    
+	MOVWF	    WPUB	    ; Rpu de RB0 a RB4 (sin RB2 porque causa interrupcion por alguna razon)
+	MOVWF	    IOCB	    ; Interrupcion por cambios en RB0 a RB4 (sin RB2 porque causa interrupcion por alguna razon)
 	MOVLW	    b'10000000'	    ; Justificado a la derecha (priorizo ADRESL), Vref- = GND, Vref+ = Vcc
 	MOVWF	    ADCON1	    
 	MOVLW	    b'00100100'	    ; Habilita la Transmision y configura Transmision de 8 bits habilitada a alta velocidad (BRGH=1)
@@ -115,7 +121,6 @@ MAIN
 	MOVWF	    DIG1
 	MOVLW	    .1		    ; 1
 	MOVWF	    DIG2
-	CLRF	    TEMPTECLADO	    ; se inicia la temperatura ingresada por teclado en 0
 	CLRW
 	BCF	    STATUS,C
 	BCF	    STATUS,Z
@@ -131,7 +136,7 @@ ISR
     GOTO        MUX
     BTFSC       PIR1,TMR1IF	    ; Si no es interrupcion por Timer1, salta
     GOTO	SAMPLE
-    ;GOTO        KEYPAD		    ; Si llega aca, es interrupcion por cambios en RB
+    GOTO        KEYPAD		    ; Si llega aca, es interrupcion por cambios en RB
     
 MUX
     BCF         STATUS,C
@@ -140,7 +145,7 @@ MUX
     BTFSS       AUX,1		    ; Si el segundo bit de AUX es 0, pone 1 en STATUS,C
     BSF         STATUS,C         
     RRF         AUX,F		    ; Rota Aux a la derecha
-    MOVF	AUX,W
+    MOVF	AUX,W		    ; Copia Aux en W
     MOVWF       PORTB		    ; Hace el multiplexado
     
     CLRW
@@ -151,12 +156,14 @@ MUX
     CALL        TABLADISPLAY
     MOVWF       PORTD		    ; Activa los segmentos del display para mostrar el numero de digito que corresponda
     
+    BTFSC	KEY_CHECK,2
+    DECF	KEY_CHECK,F	    ; Si KEY_CHECK es mayor a 011, le resta 1 (solamente le puede restar 1 tres veces)
+    
     MOVLW       .100
     MOVWF       TMR0		    ; Carga Timer0 para que dure 10ms (para los displays y el teclado)
     BCF         INTCON,T0IF
     GOTO        EXIT_ISR
-
-TABLADISPLAY			    ; La tabla se hace teniendo en cuenta Display de Anodo Comun
+TABLADISPLAY			    ; La tabla se hace teniendo en cuenta Display de CATODO Comun
     ADDWF       PCL,F
     RETLW       b'00111111'	    ; 0
     RETLW       b'00000110'	    ; 1
@@ -169,6 +176,9 @@ TABLADISPLAY			    ; La tabla se hace teniendo en cuenta Display de Anodo Comun
     RETLW       b'01111111'	    ; 8
     RETLW       b'01101111'	    ; 9
     RETLW	b'01110110'	    ; H
+    RETLW	b'01111001'	    ; E
+    RETLW	b'01010000'	    ; r
+    RETLW	b'00000000'	    ; Nada
     
 SAMPLE
     CALL	SAMPLETIME	    ; Acquisition delay
@@ -181,6 +191,7 @@ SAMPLE
     BANKSEL	TMR1L
     MOVWF	ADCRESULT	    ; Guarda el resultado del ADC
     MOVWF	ADCDIGIT	    ; Guarda el resultado del ADC en una variable auxiliar
+    BTFSS	AUX_COMSERIE,0	    ; Hace un envio inicial en serie de TEMPREF y despues no lo hace mas, solamente al cambiar el valor
     CALL	COMSERIE	    ; Envia los datos por el puerto de comunicacion en serie RC6 (TX)
     CALL	DIGITOS		    ; Setea los digitos del display
     CALL	CHECK		    ; Verifica que hacer con perifericos
@@ -188,22 +199,12 @@ SAMPLE
     CLRF        TMR1H
     BCF         PIR1,TMR1IF
     GOTO        EXIT_ISR
-
 SAMPLETIME			    ;DELAY DE 12 uS
     MOVLW	.4
-    MOVWF	CONTSAMPLE
-    DECFSZ	CONTSAMPLE,F
+    MOVWF	CONT_TEMP
+    DECFSZ	CONT_TEMP,F
     GOTO $-1
     RETURN
-    
-COMSERIE
-    MOVF	TEMPREF,W	    ; Copia TEMPREF en W
-    MOVWF	TXREG		    ; Se escribe la TEMPREF en TXREG
-    NOP				    ; "Polling TXIF immediately following the TXREG write will return invalid results"
-    BTFSS	PIR1,TXIF	    ; Sigue cuando TXREG se haya vaciado (no es necesario habilitar TXIE)
-    GOTO	$-1
-    RETURN
-    
 DIGITOS
     CLRF	DIG1		    ; Limpio DIG1 para no tener problemas con iteraciones anteriores
     MOVLW	.10
@@ -215,7 +216,6 @@ DIGITOS
     ADDWF	ADCDIGIT,W	    ; Agrego 10 por la resta adicional y al resultado lo paso a W porque es el digito 2
     MOVWF	DIG2		    ; El resto de la division pasa a ser el digito 2
     RETURN
-
 CHECK
     MOVF	ADCRESULT,W	    ; Copia ADCRESULT en W para la resta
     SUBWF	TEMPREF,W	    ; TEMPREF-ADCRESULT
@@ -224,27 +224,139 @@ CHECK
     BTFSS	STATUS,C	    
     GOTO	REFRIGERATE	    ; Si el resultado de la resta es positivo (prender calentador)
     GOTO	HEAT		    ; Si el resultado de la resta es negativo (prende fan y bomba de agua)
-    
 OFFALL
     MOVLW	b'11111111'	    ; Apaga todo, calentador, bomba y fan
     MOVWF	PORTA
-    RETURN			    ; Vuelve a SAMPLE
-    
+    RETURN			    ; Vuelve a SAMPLE 
 REFRIGERATE
     MOVLW	b'00001000'	    ; Desactiva resistencia
     MOVWF	PORTA
-    RETURN			    ; Vuelve a SAMPLE
-    
+    RETURN			    ; Vuelve a SAMPLE 
 HEAT
     MOVLW	b'00000110'	    ; Apaga bomba y fan y prende resistencia
     MOVWF	PORTA
     RETURN			    ; Vuelve a SAMPLE
     
+KEYPAD
+    BTFSS	KEY_CHECK,2	    ; Solamente se procesa una interrupcion cuando hayan pasado mas de 3 MUX (un recorrido entero del teclado) sin tener un boton apretado
+    GOTO	PRESIONAR
+END_KEYPAD
+    MOVLW	b'00000111'	    ; 111-011(3D)=100 (en este caso no se procesa la interrupcion) 
+    MOVWF	KEY_CHECK
+    CALL	REBOTE
+    BCF         INTCON,RBIF
+    GOTO	EXIT_ISR
+REBOTE				    ;DELAY DE 1,5 mS
+    MOVLW	b'11111111'
+    MOVWF	CONT_TEMP
+    DECFSZ	CONT_TEMP,F
+    GOTO $-1
+    MOVLW	b'11111111'
+    MOVWF	CONT_TEMP
+    DECFSZ	CONT_TEMP,F
+    GOTO $-1
+    RETURN
+PRESIONAR
+    BTFSS	PORTB,RB4	    ; Identifica la tecla apretada
+    GOTO	TABLA_A
+    BTFSS	PORTB,RB3
+    GOTO	TABLA_B
+    BTFSS	PORTB,RB1
+    GOTO	TABLA_C
+    BTFSS	PORTB,RB0
+    GOTO	TABLA_D		    ; Si llega hasta aca, se esta apretando algo en la fila de abajo
+TABLA_A
+    BTFSS	AUX,5
+    MOVLW	.1
+    BTFSS	AUX,6
+    MOVLW	.2
+    BTFSS	AUX,7
+    MOVLW	.3
+    GOTO	DIGITAR		    
+TABLA_B
+    BTFSS	AUX,5
+    MOVLW	.4
+    BTFSS	AUX,6
+    MOVLW	.5
+    BTFSS	AUX,7
+    MOVLW	.6
+    GOTO	DIGITAR		    
+TABLA_C
+    BTFSS	AUX,5
+    MOVLW	.7
+    BTFSS	AUX,6
+    MOVLW	.8
+    BTFSS	AUX,7
+    MOVLW	.9		    ; b'1001'
+    GOTO	DIGITAR		    
+TABLA_D
+    BTFSS	AUX,5
+    GOTO	LIMPIAR		    ; Si se presiono *, limpia el valor introducido por teclado
+    BTFSS	AUX,6
+    MOVLW	.0		    ; Si llega hasta aca, es que hay que agregar un digito a TEMPTECLADO
+    BTFSS	AUX,7
+    GOTO	ESTABLECER	    ; Si se presiono #, configura el valor introducido por teclado
+    GOTO	DIGITAR		    
+LIMPIAR
+    CLRF	TEMPTECLADO
+    MOVLW	.11		    ; Muestra "Er" de Erased en el display
+    MOVWF	DIG1
+    MOVLW	.12
+    MOVWF	DIG2
+    GOTO	END_KEYPAD
+ESTABLECER
+    MOVF	TEMPTECLADO,W	    ; Copia el binario que representa lo ingresado por teclado en W
+    ANDLW	b'11110000'	    ; Separo el MSD
+    MOVWF	AUX_SWAP
+    SWAPF	AUX_SWAP,W	    ; Hago swap de los nibbles para multiplicar x10 al MSD
+    MOVWF	DIG1
+    MOVWF	PAD_MUL		    ; Copio el MSD en PAD_MUL
+    ANDLW	b'11111111'	    ; Verifico que el MSD no es un 0 (para no hacer la multiplicacion)
+    BTFSS	STATUS,Z
+    CALL	MULTIPLICAR
+    MOVLW	b'00001111'	    
+    ANDWF	TEMPTECLADO,F	    ; Borro al MSD (dejo el LSD)
+    MOVF	TEMPTECLADO,W
+    MOVWF	DIG2
+    MOVF	PAD_DIG1,W	    ; Copio el MSD obtenido en W
+    ADDWF	TEMPTECLADO,W	    ; PAD_DIG1(MSD)+TEMPTECLADO(LSD)
+    MOVWF	TEMPREF		    ; Copia el resultado en TEMPREF
+    CLRF	TEMPTECLADO	    ; Borra lo que se ingreso por teclado y espera por un nuevo valor
+    CLRF	PAD_DIG1	    ; Borra el valor del MSD obtenido por multiplicacion
+    CALL	COMSERIE	    ; Envia el nuevo valor de TEMPREF por comunicacion en serie
+    GOTO	END_KEYPAD
+COMSERIE
+    BTFSS	AUX_COMSERIE,0	    ; Se setea la flag del envio inicial
+    INCF	AUX_COMSERIE
+    MOVF	TEMPREF,W	    ; Copia TEMPREF en W
+    MOVWF	TXREG		    ; Se escribe la TEMPREF en TXREG
+    NOP				    ; "Polling TXIF immediately following the TXREG write will return invalid results"
+    BTFSS	PIR1,TXIF	    ; Sigue cuando TXREG se haya vaciado (no es necesario habilitar TXIE)
+    GOTO	$-1
+    RETURN
+MULTIPLICAR
+    MOVLW	.10
+    ADDWF	PAD_DIG1,F	    ; Agrega 10 PAD_MUL cantidades de veces
+    DECFSZ	PAD_MUL
+    GOTO	$-2
+    RETURN
+DIGITAR
+    MOVWF	AUX_ADD		    ; Almacena temporalmente el numero presionado (que sera el nuevo LSD)
+    MOVWF	DIG2		    ; Muestra el numero presionado en el display
+    SWAPF	TEMPTECLADO,F	    ; El LSD pasa a ser el MSD
+    MOVLW	b'11110000'	    
+    ANDWF	TEMPTECLADO,W	    ; Limpia lo que ocupaba el lugar del LSD y al resultado lo guarda en W
+    ADDWF	AUX_ADD,W	    ; Calcula el nuevo TEMPTECLADO
+    MOVWF	TEMPTECLADO	    ; Reemplazo por el nuevo TEMPTECLADO
+    MOVLW	.13		    
+    MOVWF	DIG1		    ; Evita que se muestra un cifra adicional en el display
+    GOTO	END_KEYPAD	
+
 EXIT_ISR
     SWAPF       status_temp,w	    ; Recupera contexto
     MOVWF       STATUS            
     SWAPF       w_temp,f
     SWAPF       w_temp,w          
-    RETFIE			    ; Vuelve de la interrupciÃ³n
+    RETFIE			    ; Vuelve de la interrupción
 
 	END
