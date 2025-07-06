@@ -1,6 +1,5 @@
-# TP-DIGITAL2
+# Water Temperature Control System for PIC16F887
 
-Este programa para el PIC16F887 consiste en un sistema que enfria o calienta agua hasta alcanzar una temperatura inicial de 25 ºC y que se puede configurar en tiempo real a 
-traves de un teclado, todo esto mientras se muestra la temperatura del agua por dos displays de 7 segmentos. El programa esta pensado para temperaturas de entre 0 y 99 ºC.
+This application, developed for the PIC16F887 microcontroller, implements a system capable of heating or cooling water to reach a target temperature, initially set to 25 °C. The desired temperature can be configured in real time via a keypad, while the current water temperature is continuously displayed on two 7-segment displays. The system is designed to operate within a temperature range of 0 to 99 °C.
 
-Se hace uso del Timer0, del Timer1, interrupciones por ambos, el ADC y el modulo EUSART para transmision en serie. Ademas se realiza multiplexado de teclado y display.
+The implementation utilizes Timer0 and Timer1, including their respective interrupt features, the Analog-to-Digital Converter (ADC), and the Enhanced Universal Synchronous Asynchronous Receiver Transmitter (EUSART) module for serial communication. Furthermore, the design incorporates multiplexing for both the keypad and the display.
